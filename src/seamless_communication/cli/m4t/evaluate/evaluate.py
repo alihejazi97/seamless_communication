@@ -361,6 +361,15 @@ def run_eval(
         whisper_model_name=whisper_model_name,
     )
 
+    compute_quality_metrics(
+        output_manifest_tsv_path=model_outputs_tsv,
+        output_path=output_path,
+        tgt_lang=ctx.target_lang,
+        task='T2TT',
+        device=ctx.device,
+        whisper_model_name=whisper_model_name,
+    )
+
 
 def load_checkpoint(model: UnitYModel, path: str, device = torch.device("cpu")) -> None:
     saved_model = torch.load(path, map_location=device)["model"]
