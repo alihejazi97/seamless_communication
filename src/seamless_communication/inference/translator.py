@@ -89,6 +89,8 @@ class Translator(nn.Module):
     ):
         super().__init__()
 
+        bug_fix_model_name = model_name_or_card
+
         if isinstance(model_name_or_card, str):
             model_name_or_card = asset_store.retrieve_card(model_name_or_card)
 
@@ -110,7 +112,8 @@ class Translator(nn.Module):
         if device == torch.device("cpu"):
             dtype = torch.float32
 
-        self.model = load_unity_model(model_name_or_card, device=device, dtype=dtype)
+        self.model = load_unity_model(bug_fix_model_name, device=device, dtype=dtype)
+        
         self.model.eval()
         assert isinstance(self.model, UnitYModel)
 
