@@ -139,8 +139,8 @@ def init_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--wandb_kwargs_path",
-        type=Path,
-        default=None,
+        type=str,
+        default="",
         help=("path to wandb_kwargs json which is used in wandb.init."),
     )
     return parser
@@ -220,7 +220,7 @@ def main() -> None:
     if args.wandb_kwargs_path:
         with open(args.wandb_kwargs_path, 'r') as f:
             wandb_kwargs = json.load(f)
-        wandb_kwargs['config']['finetune_params'] = finetune_params
+        wandb_kwargs['config']['finetune_params'] = vars(finetune_params)
     else:
         wandb_kwargs = None
     

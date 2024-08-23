@@ -296,6 +296,7 @@ class UnitYFinetune:
         if dist_utils.is_main_process():
             if wandb_kwargs:
                 self.wandb_run = wandb.init(**self.wandb_kwargs)
+        self.save_count = 0
 
 
     def _reset_stats(self) -> None:
@@ -305,6 +306,7 @@ class UnitYFinetune:
         self.patience_left = self.params.patience
         self.best_eval_loss = None
         self.is_best_state = False
+        self.save_count = 0
 
     def _wrap_model_for_trainining(self, model: UnitYModel) -> nn.Module:
         wrapped_model = UnitYFinetuneWrapper(
@@ -407,13 +409,14 @@ class UnitYFinetune:
     def _save_model(self) -> None:
         logger.info("Saving model")
         if dist_utils.is_main_process():
+            self.save_count += 1
             torch.save({
                 "model_name": self.params.model_name,
                 "model": {
                     key.replace("module.model.model.", ""): value
                     for key, value in self.model.state_dict().items()
                 }
-            }, self.params.save_model_path)
+            }, str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt'))
         if dist_utils.is_dist_initialized():
             dist.barrier()
 
