@@ -173,9 +173,11 @@ def main() -> None:
         finetune_params.finetune_mode == trainer.FinetuneMode.SPEECH_TO_TEXT
         and model.t2u_model is not None
     ):
+        del model.t2u_model
         model.t2u_model = None
     
     if model.text_encoder is not None:
+        del model.text_encoder
         model.text_encoder = None
     
     # Put model on selected device
