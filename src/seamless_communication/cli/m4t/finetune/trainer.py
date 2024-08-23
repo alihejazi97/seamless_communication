@@ -29,6 +29,7 @@ from seamless_communication.models.unity import (
     UnitYModel,
     UnitYT2UModel,
 )
+import wandb
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +250,8 @@ class UnitYFinetune:
         params: FinetuneParams,
         train_data_loader: dataloader.UnitYDataLoader,
         eval_data_loader: Optional[dataloader.UnitYDataLoader] = None,
-        freeze_modules: Optional[List[Union[str, torch.nn.Module]]] = None
+        freeze_modules: Optional[List[Union[str, torch.nn.Module]]] = None,
+        wandb_kwargs = None
     ):
         self.params = params
         self.calc_loss = CalcLoss(
@@ -290,6 +292,11 @@ class UnitYFinetune:
         self.best_eval_loss: Optional[float] = None
         self.is_best_state: bool = False
         torch.set_float32_matmul_precision("high")
+        self.wandb_kwargs = wandb_kwargs
+        if dist_utils.is_main_process():
+            if wandb_kwargs:
+                self.wandb_run = wandb.init(**self.wandb_kwargs)
+
 
     def _reset_stats(self) -> None:
         self.train_loss_hist.reset()
@@ -328,6 +335,10 @@ class UnitYFinetune:
         self.patience_left = (
             self.params.patience if self.is_best_state else self.patience_left - 1
         )
+        if dist_utils.is_main_process():
+            if self.wandb_run:
+                self.wandb_run.log({'update step' : self.update_idx, 'eval_loss': eval_loss, 
+                                    'best_eval_loss': self.best_eval_loss, 'patience_steps_left': self.patience_left})
         logger.info(
             f"Eval after {self.update_idx} updates: "
             f"loss={eval_loss:.4f} "
@@ -336,7 +347,7 @@ class UnitYFinetune:
         )
 
     @torch.no_grad()
-    def _eval_model(self, n_batches: int) -> None:
+    def _eval_model(self) -> None:
         """Calc avg loss on eval dataset and update evaluation stats"""
         if self.eval_data_loader is None:
             return
@@ -344,8 +355,6 @@ class UnitYFinetune:
         loss_hist = LossCollector(device=self.params.device)
         self.model.eval()
         for batch in self.eval_data_loader.get_dataloader():
-            if n_batches == 0:
-                break
             assert batch.speech_to_text.src_tokens is not None
             with torch.autocast(device_type=self.params.device.type, dtype=self.params.float_dtype):
                 loss = self.calc_loss(batch, *self.model(batch))
@@ -354,7 +363,6 @@ class UnitYFinetune:
                 continue
             del batch  # force memory release
             loss_hist.update(1, loss.item())
-            n_batches -= 1
         eval_loss = loss_hist.reduce()
         self._update_eval_stats(eval_loss)
 
@@ -363,6 +371,10 @@ class UnitYFinetune:
         if (self.update_idx + 1) % self.params.log_steps == 0:
             avg_loss = self.train_loss_hist.reduce()
             self.train_loss_hist.reset()
+            if dist_utils.is_main_process():
+                if self.wandb_run:
+                    self.wandb_run.log({'Epoch' : self.epoch_idx + 1, 'update step': self.update_idx, 
+                                        'train loss': avg_loss, 'last lr': self.lr_scheduler.get_last_lr()[0]})
             logger.info(
                 f"Epoch {str(self.epoch_idx + 1).zfill(3)} / "
                 f"update {str(self.update_idx + 1).zfill(5)}: "
@@ -408,7 +420,7 @@ class UnitYFinetune:
     def run(self) -> None:
         logger.info("Start Finetuning")
         self._reset_stats()
-        self._eval_model(n_batches=100)
+        self._eval_model()
         
         train_dataloader = self.train_data_loader.get_dataloader()
         
@@ -423,7 +435,7 @@ class UnitYFinetune:
                 
                 # Clear GPU memory for eval
                 torch.cuda.empty_cache()
-                self._eval_model(n_batches=100)
+                self._eval_model()
                     
                 # Save the current model if its the best we've ever had
                 if self.is_best_state:

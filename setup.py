@@ -32,6 +32,7 @@ setup(
         "scipy",
         "torchaudio",
         "tqdm",
+        "wandb",
     ],
     entry_points={
         "console_scripts": [

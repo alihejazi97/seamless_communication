@@ -8,6 +8,7 @@ import argparse
 import logging
 import os
 from pathlib import Path
+import json
 
 import torch
 
@@ -136,6 +137,12 @@ def init_parser() -> argparse.ArgumentParser:
         default="cuda",
         help=("Device to fine-tune on. See `torch.device`."),
     )
+    parser.add_argument(
+        "--wandb_kwargs_path",
+        type=Path,
+        default=None,
+        help=("path to wandb_kwargs json which is used in wandb.init."),
+    )
     return parser
 
 
@@ -209,12 +216,21 @@ def main() -> None:
         ),
         dataset_manifest_path=args.eval_dataset)
     
+    #loading wandb configs
+    if args.wandb_kwargs_path:
+        with open(args.wandb_kwargs_path, 'r') as f:
+            wandb_kwargs = json.load(f)
+        wandb_kwargs['config']['finetune_params'] = finetune_params
+    else:
+        wandb_kwargs = None
+    
     finetune = trainer.UnitYFinetune(
         model=model,
         params=finetune_params,
         train_data_loader=train_dataloader,
         eval_data_loader=eval_dataloader,
-        freeze_modules=args.freeze_layers)
+        freeze_modules=args.freeze_layers,
+        wandb_kwargs=wandb_kwargs)
     
     finetune.run()
 
