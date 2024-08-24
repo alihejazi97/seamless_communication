@@ -442,20 +442,19 @@ class UnitYFinetune:
                         for key, value in self.model.state_dict().items()
                     }
                 }, model_save_path)
-            os.remove(str(self.params.save_model_path).replace('.pt', f'_latest.pt'))
-            shutil.copyfile(model_save_path, str(self.params.save_model_path).replace('.pt', f'_latest.pt'))
+            latest_checkpoint_path = str(self.params.save_model_path).replace('.pt', f'_latest.pt')
+            shutil.copyfile(model_save_path, latest_checkpoint_path)
         if dist_utils.is_dist_initialized():
             dist.barrier()
 
     def shift_and_delete_checkpoints(self):
         if self.save_count > self.params.num_checkpoints_to_retain:
-            #delete oldest checkpoints
-            os.remove(str(self.params.save_model_path).replace('.pt', f'_1.pt'))
             #shift checkpoints
             for i in range(1,self.params.num_checkpoints_to_retain):
-                old_file = str(self.params.save_model_path).replace('.pt', f'_{i+1}.pt')
-                new_file = str(self.params.save_model_path).replace('.pt', f'_{i}.pt')
-                os.rename(old_file, new_file)
+                src_file = str(self.params.save_model_path).replace('.pt', f'_{i+1}.pt')
+                dst_file = str(self.params.save_model_path).replace('.pt', f'_{i}.pt')
+                if os.path.exists(src_file):
+                    os.replace(src_file, dst_file)
             return str(self.params.save_model_path).replace('.pt', f'_{self.params.num_checkpoints_to_retain}.pt')
         else:
             return str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt')
