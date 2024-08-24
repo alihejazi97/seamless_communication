@@ -91,6 +91,12 @@ class FinetuneParams:
     num_checkpoints_to_retain: int = 1
     """ Where to run computation"""
 
+    gradient_accumulation_steps: int = 1
+    """ Steps to accumulate gradients."""
+
+    remove_lr_scheduler: bool = False
+    """ Whether to to remove learning rate scheduler."""
+
 class UnitYFinetuneWrapper(nn.Module):
     """Convenience wrapper that does a forward pass
     and returns S2T and T2U logits"""
@@ -272,11 +278,12 @@ class UnitYFinetune:
         
         if freeze_modules:
             self._freeze_modules(freeze_modules)
-
-        self.lora_config = lora.LoRAConfig(**lora_config)
         
-        if self.lora_config:
+        if lora_config:
+            self.lora_config = lora.LoRAConfig(**lora_config)
             self.model = lora.wrap_lora(model, self.lora_config)
+        else:
+            self.lora_config = None
 
         self.model = self._wrap_model_for_trainining(model=self.model)
         
@@ -293,11 +300,16 @@ class UnitYFinetune:
             weight_decay=0.0,
             fused=(self.params.device.type == "cuda"),
         )
-        self.lr_scheduler = MyleLR(
+
+        if self.params.remove_lr_scheduler:
+            self.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            optimizer=self.optimizer,
+            factor=1.0,)
+        else:
+            self.lr_scheduler = MyleLR(
             optimizer=self.optimizer,
             num_warmup_steps=self.params.warmup_steps,
-            start_lr=1e-9,
-        )
+            start_lr=1e-9,)
 
         self.train_loss_hist = LossCollector(device=params.device)
         self.epoch_idx: int = 0
@@ -398,10 +410,9 @@ class UnitYFinetune:
                 f"last lr={self.lr_scheduler.get_last_lr()[0]:.2E}"
             )
 
-    def _train_step(self, batch: List[dataloader.MultimodalSeqsBatch]) -> None:
+    def _train_step(self, batch_idx, batch: List[dataloader.MultimodalSeqsBatch]) -> None:
         """Run one train step"""
         self.model.train()
-        self.optimizer.zero_grad()
         with torch.autocast(device_type=self.params.device.type, dtype=self.params.float_dtype):
             tokens, units = self.model(batch)
         
@@ -411,14 +422,17 @@ class UnitYFinetune:
             raise RuntimeError("Train loss is NaN! Something is wrong in the model!")
         
         self.grad_scaler.scale(loss).backward()
-        self.grad_scaler.step(self.optimizer)
-        self.grad_scaler.update()
-        self.lr_scheduler.step()
+
+        if (batch_idx + 1) % self.params.gradient_accumulation_steps == 0:
+            self.grad_scaler.step(self.optimizer)
+            self.grad_scaler.update()
+            self.optimizer.zero_grad()
+            self.lr_scheduler.step()
         
-        assert batch.speech_to_text.src_tokens is not None
-        self.train_loss_hist.update(1, loss.item())
-        self._train_step_log()
-        self.update_idx += 1
+            assert batch.speech_to_text.src_tokens is not None
+            self.train_loss_hist.update(1, loss.item())
+            self._train_step_log()
+            self.update_idx += 1
 
     def _save_model(self) -> None:
         logger.info("Saving model")
@@ -468,9 +482,9 @@ class UnitYFinetune:
         train_dataloader = self.train_data_loader.get_dataloader()
         
         while self.epoch_idx < self.params.max_epochs and self.patience_left:
-            for train_batch in tqdm(train_dataloader, desc="Training Steps"):
+            for batch_idx, train_batch in enumerate(tqdm(train_dataloader, desc="Training Steps")):
                 # Run batch through train step
-                self._train_step(train_batch)
+                self._train_step(batch_idx, train_batch)
                 
                 # Perform eval if its time to eval
                 if not self.update_idx or self.update_idx % self.params.eval_steps != 0:

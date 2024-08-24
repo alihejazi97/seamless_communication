@@ -167,6 +167,17 @@ def init_parser() -> argparse.ArgumentParser:
         default=1,
         help=("number of checkpoints to retain. you can do polyak averging later."),
     )
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help=("gradient accumulation step to increase effective batch size."),
+    )
+    parser.add_argument(
+        "--remove_lr_scheduler",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        type=bool)
     return parser
 
 
@@ -193,7 +204,9 @@ def main() -> None:
         warmup_steps=args.warmup_steps,
         eval_steps=args.eval_steps,
         log_steps=args.log_steps,
-        num_checkpoints_to_retain=args.num_checkpoints_to_retain
+        num_checkpoints_to_retain=args.num_checkpoints_to_retain,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        remove_lr_scheduler=args.remove_lr_scheduler
     )
     
     logger.info(f"Finetune Params: {finetune_params}")
