@@ -143,6 +143,30 @@ def init_parser() -> argparse.ArgumentParser:
         default="",
         help=("path to wandb_kwargs json which is used in wandb.init."),
     )
+    parser.add_argument(
+        "--dataset_info_path",
+        type=str,
+        default="",
+        help=("path to dataset info json which is used in wandb.init."),
+    )
+    parser.add_argument(
+        "--lora_config_path",
+        type=str,
+        default="",
+        help=("path to lora config json which is used in wandb.init."),
+    )
+    parser.add_argument(
+        "--train_script_path",
+        type=str,
+        default="",
+        help=("path to train_script_path config json which is used in wandb.init."),
+    )
+    parser.add_argument(
+        "--num_checkpoints_to_retain",
+        type=int,
+        default=1,
+        help=("number of checkpoints to retain. you can do polyak averging later."),
+    )
     return parser
 
 
@@ -169,6 +193,7 @@ def main() -> None:
         warmup_steps=args.warmup_steps,
         eval_steps=args.eval_steps,
         log_steps=args.log_steps,
+        num_checkpoints_to_retain=args.num_checkpoints_to_retain
     )
     
     logger.info(f"Finetune Params: {finetune_params}")
@@ -216,11 +241,35 @@ def main() -> None:
         ),
         dataset_manifest_path=args.eval_dataset)
     
+    if args.dataset_info_path:
+        with open(args.dataset_info_path, 'r') as f:
+            dataset_info = json.load(f)
+    else:
+        dataset_info = None
+
+    if args.train_script_path:
+        with open(args.train_script_path, 'r') as f:
+            train_script = f.read()
+    else:
+        train_script = None
+    
+    if args.lora_config_path:
+        with open(args.lora_config_path, 'r') as f:
+            lora_config = json.load(f)
+    else:
+        lora_config = None
+
     #loading wandb configs
     if args.wandb_kwargs_path:
         with open(args.wandb_kwargs_path, 'r') as f:
             wandb_kwargs = json.load(f)
         wandb_kwargs['config']['finetune_params'] = vars(finetune_params)
+        if dataset_info:
+            wandb_kwargs['config']['dataset_info'] = dataset_info
+        if train_script:
+            wandb_kwargs['config']['train_script'] = train_script
+        if lora_config:
+            wandb_kwargs['config']['lora_config'] = lora_config
     else:
         wandb_kwargs = None
     
@@ -230,7 +279,8 @@ def main() -> None:
         train_data_loader=train_dataloader,
         eval_data_loader=eval_dataloader,
         freeze_modules=args.freeze_layers,
-        wandb_kwargs=wandb_kwargs)
+        wandb_kwargs=wandb_kwargs,
+        lora_config=lora_config)
     
     finetune.run()
 

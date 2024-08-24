@@ -23,6 +23,8 @@ from fairseq2.nn.padding import PaddingMask
 from fairseq2.optim.lr_scheduler import MyleLR
 from fairseq2.typing import Device
 from torch.optim import AdamW
+import os, shutil
+
 
 from seamless_communication.cli.m4t.finetune import dataloader, dist_utils
 from seamless_communication.models.unity import (
@@ -85,7 +87,9 @@ class FinetuneParams:
 
     device: Device = torch.device("cuda")
     """ Where to run computation"""
-
+    
+    num_checkpoints_to_retain: int = 1
+    """ Where to run computation"""
 
 class UnitYFinetuneWrapper(nn.Module):
     """Convenience wrapper that does a forward pass
@@ -252,7 +256,8 @@ class UnitYFinetune:
         train_data_loader: dataloader.UnitYDataLoader,
         eval_data_loader: Optional[dataloader.UnitYDataLoader] = None,
         freeze_modules: Optional[List[Union[str, torch.nn.Module]]] = None,
-        wandb_kwargs = None
+        wandb_kwargs = None,
+        lora_config = None,
     ):
         self.params = params
         self.calc_loss = CalcLoss(
@@ -268,9 +273,10 @@ class UnitYFinetune:
         if freeze_modules:
             self._freeze_modules(freeze_modules)
 
-        self.lora_config = lora.LoRAConfig(32, 64, 0.2, ['.*_proj'])
-
-        self.model = lora.wrap_lora(model, self.lora_config)
+        self.lora_config = lora.LoRAConfig(**lora_config)
+        
+        if self.lora_config:
+            self.model = lora.wrap_lora(model, self.lora_config)
 
         self.model = self._wrap_model_for_trainining(model=self.model)
         
@@ -418,6 +424,7 @@ class UnitYFinetune:
         logger.info("Saving model")
         if dist_utils.is_main_process():
             self.save_count += 1
+            model_save_path = self.shift_and_delete_checkpoints()
             if self.lora_config:
                 lora_unwraped_model = lora.unwrap_lora(copy.deepcopy(self.model))
                 torch.save({
@@ -426,7 +433,7 @@ class UnitYFinetune:
                         key.replace("module.model.model.", ""): value
                         for key, value in lora_unwraped_model.state_dict().items()
                     }
-                }, str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt'))
+                }, model_save_path)
             else:
                 torch.save({
                     "model_name": self.params.model_name,
@@ -434,9 +441,25 @@ class UnitYFinetune:
                         key.replace("module.model.model.", ""): value
                         for key, value in self.model.state_dict().items()
                     }
-                }, str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt'))
+                }, model_save_path)
+            os.remove(str(self.params.save_model_path).replace('.pt', f'_latest.pt'))
+            shutil.copyfile(model_save_path, str(self.params.save_model_path).replace('.pt', f'_latest.pt'))
         if dist_utils.is_dist_initialized():
             dist.barrier()
+
+    def shift_and_delete_checkpoints(self):
+        if self.save_count > self.params.num_checkpoints_to_retain:
+            #delete oldest checkpoints
+            os.remove(str(self.params.save_model_path).replace('.pt', f'_1.pt'))
+            #shift checkpoints
+            for i in range(1,self.params.num_checkpoints_to_retain):
+                old_file = str(self.params.save_model_path).replace('.pt', f'_{i+1}.pt')
+                new_file = str(self.params.save_model_path).replace('.pt', f'_{i}.pt')
+                os.rename(old_file, new_file)
+            return str(self.params.save_model_path).replace('.pt', f'_{self.params.num_checkpoints_to_retain}.pt')
+        else:
+            return str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt')
+        
 
     def run(self) -> None:
         logger.info("Start Finetuning")
