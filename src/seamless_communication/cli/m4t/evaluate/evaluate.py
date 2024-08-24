@@ -146,7 +146,7 @@ def build_data_pipeline(
         raise NotImplementedError
 
     # TODO: This will be soon auto-tuned. Right now hand-tuned for devfair.
-    n_parallel = 4
+    n_parallel = 1
     if ctx.input_modality == Modality.SPEECH:
         assert ctx.audio_root_dir is not None
 

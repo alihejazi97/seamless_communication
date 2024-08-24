@@ -13,7 +13,7 @@ from enum import Enum
 from tqdm import tqdm
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
-
+import copy
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -30,6 +30,7 @@ from seamless_communication.models.unity import (
     UnitYT2UModel,
 )
 import wandb
+import fairseq2.nn.lora as lora
 
 logger = logging.getLogger(__name__)
 
@@ -262,9 +263,16 @@ class UnitYFinetune:
             else None,
         )
         
-        self.model = self._wrap_model_for_trainining(model=model)
+        self.model = model
+        
         if freeze_modules:
             self._freeze_modules(freeze_modules)
+
+        self.lora_config = lora.LoRAConfig(32, 64, 0.2, ['.*_proj'])
+
+        self.model = lora.wrap_lora(model, self.lora_config)
+
+        self.model = self._wrap_model_for_trainining(model=self.model)
         
         self.train_data_loader = train_data_loader
         self.eval_data_loader = eval_data_loader
@@ -410,13 +418,23 @@ class UnitYFinetune:
         logger.info("Saving model")
         if dist_utils.is_main_process():
             self.save_count += 1
-            torch.save({
-                "model_name": self.params.model_name,
-                "model": {
-                    key.replace("module.model.model.", ""): value
-                    for key, value in self.model.state_dict().items()
-                }
-            }, str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt'))
+            if self.lora_config:
+                lora_unwraped_model = lora.unwrap_lora(copy.deepcopy(self.model))
+                torch.save({
+                    "model_name": self.params.model_name,
+                    "model": {
+                        key.replace("module.model.model.", ""): value
+                        for key, value in lora_unwraped_model.state_dict().items()
+                    }
+                }, str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt'))
+            else:
+                torch.save({
+                    "model_name": self.params.model_name,
+                    "model": {
+                        key.replace("module.model.model.", ""): value
+                        for key, value in self.model.state_dict().items()
+                    }
+                }, str(self.params.save_model_path).replace('.pt', f'_{self.save_count}.pt'))
         if dist_utils.is_dist_initialized():
             dist.barrier()
 
